@@ -1,39 +1,48 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import User, { IUser } from '../models/user.model';
 
-interface JwtPayload {
-  userId: string;
-  email: string;
-  role: string;
-}
-
-declare global {
-  namespace Express {
-    interface Request {
-      user?: JwtPayload;
-    }
-  }
-}
-
-export default function authMiddleware(
+const authMiddleware = async (
   req: Request,
   res: Response,
   next: NextFunction
-) {
+) => {
   try {
+    // ✅ READ TOKEN FROM COOKIE
     const token = req.cookies?.token;
+
     if (!token) {
-      return res.status(401).json({ message: 'Unauthorized' });
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      });
     }
 
+    // ✅ VERIFY TOKEN
     const decoded = jwt.verify(
       token,
       process.env.JWT_SECRET as string
-    ) as JwtPayload;
+    ) as { id: string };
 
-    req.user = decoded;
+    // ✅ GET USER
+    const user = await User.findById(decoded.id).lean<IUser>();
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+    }
+
+    // ✅ ATTACH USER
+    req.user = user;
     next();
-  } catch {
-    res.status(401).json({ message: 'Invalid token' });
+  } catch (error) {
+    return res.status(401).json({
+      success: false,
+      message: 'Unauthorized',
+    });
   }
-}
+};
+
+export default authMiddleware;
