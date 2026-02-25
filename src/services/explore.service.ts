@@ -13,39 +13,83 @@ export class ExploreService {
     }
 
     public async getSuggestedCreators(currentUserId?: string) {
-        // If no currentUserId, just return some popular users
+        let users: any[];
         if (!currentUserId) {
-            return await User.find()
+            users = await User.find({ username: { $nin: ['alice', 'bob'] } })
+                .sort({ followersCount: -1 })
+                .limit(5);
+        } else {
+            const following = await Follow.find({ follower: new Types.ObjectId(currentUserId) });
+            const followingIds = following.map(f => f.following);
+
+            users = await User.find({
+                _id: { $nin: [...followingIds, new Types.ObjectId(currentUserId)] },
+                username: { $nin: ['alice', 'bob'] }
+            })
                 .sort({ followersCount: -1 })
                 .limit(5);
         }
 
-        const following = await Follow.find({ follower: new Types.ObjectId(currentUserId) });
-        const followingIds = following.map(f => f.following);
-
-        const users = await User.find({
-            _id: { $nin: [...followingIds, new Types.ObjectId(currentUserId)] }
-        })
-            .sort({ followersCount: -1 })
-            .limit(5);
-
-        return users.map(u => ({
-            ...u.toObject(),
-            id: u._id.toString(),
-            _id: u._id.toString(),
-            displayName: u.name,
-            isFollowing: false
-        }));
+        return users.map(u => {
+            const uObj = u.toObject ? u.toObject() : u;
+            const userId = uObj._id.toString();
+            return {
+                ...uObj,
+                id: userId,
+                _id: userId,
+                displayName: uObj.name || uObj.displayName,
+                avatarUrl: uObj.image || uObj.avatarUrl,
+                verified: uObj.isVerified || uObj.verified,
+                isFollowing: false
+            };
+        });
     }
 
     public async getHotPosts() {
         // Return posts sorted by engagement (likes + reposts)
-        // In a real app, we might use a complex formula or time-weighted engagement.
-        // For now, let's sum likesCount + retweetsCount
-        return await Tweet.find()
-            .sort({ likesCount: -1, retweetsCount: -1 })
+        const posts = await Tweet.find()
+            .sort({ likesCount: -1, retweetsCount: -1, _id: -1 })
             .limit(20)
-            .populate('author', 'name username image');
+            .populate('author', 'name username image isVerified');
+
+        return posts.map((p: any) => {
+            const itemObj = p.toObject ? p.toObject() : p;
+            const itemId = itemObj._id?.toString();
+
+            if (itemObj.author && typeof itemObj.author === 'object') {
+                const author = itemObj.author as any;
+                const authorId = author._id?.toString();
+                author.id = authorId;
+                author._id = authorId;
+                author.displayName = author.name || author.displayName;
+                author.avatarUrl = author.image || author.avatarUrl;
+                author.verified = author.isVerified || author.verified;
+            }
+
+            return {
+                ...itemObj,
+                id: itemId,
+                _id: itemId
+            };
+        });
+    }
+
+    // Temporary method to seed hashtags from existing tweets
+    public async initializeHashtags() {
+        const tweets = await Tweet.find({ content: { $regex: '#', $options: 'i' } });
+        for (const tweet of tweets) {
+            const hashtags = tweet.content.match(/#(\w+)/g);
+            if (hashtags) {
+                const tags = [...new Set(hashtags.map((h: string) => h.substring(1).toLowerCase()))];
+                for (const tag of tags) {
+                    await Hashtag.findOneAndUpdate(
+                        { tag },
+                        { $inc: { count: 1 }, $set: { lastUsed: tweet.createdAt } },
+                        { upsert: true }
+                    );
+                }
+            }
+        }
     }
 }
 
