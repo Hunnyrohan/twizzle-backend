@@ -104,8 +104,11 @@ export class UserService {
             image: user.image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.username}`, // Provide 'image' for frontend compatibility
             avatarUrl: user.image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.username}`, // Keep avatarUrl for safety
             coverImage: user.coverImage,
-            verified: false, // Default
+            verified: user.isVerified || false,
+            isVerified: user.isVerified || false,
             bio: user.bio,
+            location: user.location,
+            website: user.website,
             followersCount: user.followersCount,
             followingCount: user.followingCount,
             isFollowing, // Return the status
