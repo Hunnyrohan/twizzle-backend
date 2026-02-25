@@ -1,6 +1,7 @@
 import User from '../models/user.model';
 import Tweet from '../models/tweet.model';
 import Hashtag from '../models/hashtag.model';
+import Follow from '../models/follow.model';
 import { Types } from 'mongoose';
 
 interface SearchParams {
@@ -8,6 +9,7 @@ interface SearchParams {
     filter: 'top' | 'latest' | 'people' | 'media' | 'tags';
     cursor?: string;
     limit?: number;
+    currentUserId?: string;
 }
 
 interface SearchResult {
@@ -16,7 +18,7 @@ interface SearchResult {
 }
 
 export class SearchService {
-    public async search({ query, filter, cursor, limit = 10 }: SearchParams): Promise<SearchResult> {
+    public async search({ query, filter, cursor, limit = 10, currentUserId }: SearchParams): Promise<SearchResult> {
         const q = query.trim();
         if (!q) return { items: [], nextCursor: undefined };
 
@@ -80,17 +82,28 @@ export class SearchService {
 
             case 'top':
             default: {
-                const searchCriteria: any = {
+                // For 'top', we return a mix of relevant people and popular tweets
+                const userCriteria = {
+                    $or: [
+                        { username: { $regex: q, $options: 'i' } },
+                        { name: { $regex: q, $options: 'i' } }
+                    ]
+                };
+
+                const tweetCriteria = {
                     content: { $regex: q, $options: 'i' }
                 };
-                // For 'top', we ideally want engagement sorting.
-                // Cursor pagination with non-unique sorts is harder.
-                // Let's use likesCount for 'top' but it might need skip/limit if not using ID.
-                // For simplicity, let's just sort by likesCount desc
-                items = await Tweet.find(searchCriteria)
+
+                // Fetch top 3 matching users
+                const topUsers = await User.find(userCriteria).limit(3);
+
+                // Fetch tweets sorted by engagement
+                const tweets = await Tweet.find(tweetCriteria)
                     .sort({ likesCount: -1, _id: -1 })
                     .limit(limit + 1)
                     .populate('author', 'name username image');
+
+                items = [...topUsers, ...tweets];
                 break;
             }
         }
@@ -98,11 +111,67 @@ export class SearchService {
         const hasNextPage = items.length > limit;
         const resultItems = hasNextPage ? items.slice(0, limit) : items;
 
+        // Transform results to match frontend expectations and add follow status
+        const transformedItems = await Promise.all(resultItems.map(async (item) => {
+            const itemObj = (item.toObject ? item.toObject({ virtuals: true }) : item);
+            const itemId = itemObj._id?.toString() || itemObj.id?.toString();
+
+            // Handle User mapping (either as a search result or as a populated author)
+            const isUser = itemObj.username && !itemObj.content;
+
+            if (isUser) {
+                const isFollowing = currentUserId
+                    ? !!(await Follow.findOne({ follower: currentUserId, following: itemObj._id }))
+                    : false;
+
+                return {
+                    id: itemId,
+                    _id: itemId,
+                    username: itemObj.username,
+                    displayName: itemObj.name || itemObj.displayName,
+                    avatarUrl: itemObj.image || itemObj.avatarUrl,
+                    bio: itemObj.bio,
+                    verified: itemObj.isVerified || itemObj.verified,
+                    isFollowing
+                };
+            }
+
+            // Handle Hashtag mapping
+            if (itemObj.tag && !itemObj.content) {
+                return {
+                    id: itemId,
+                    _id: itemId,
+                    tag: itemObj.tag,
+                    count: itemObj.count || 0
+                };
+            }
+
+            // Handle Post mapping
+            if (itemObj.content) {
+                // If author is populated, ensure it also has the right fields for UserCard (though PostCard uses it)
+                if (itemObj.author && typeof itemObj.author === 'object') {
+                    const authorId = itemObj.author._id?.toString() || itemObj.author.id?.toString();
+                    itemObj.author.id = authorId;
+                    itemObj.author._id = authorId;
+                    itemObj.author.displayName = itemObj.author.name || itemObj.author.displayName;
+                    itemObj.author.avatarUrl = itemObj.author.image || itemObj.author.avatarUrl;
+                    itemObj.author.verified = itemObj.author.isVerified || itemObj.author.verified;
+                }
+                return {
+                    ...itemObj,
+                    id: itemId,
+                    _id: itemId
+                };
+            }
+
+            return { ...itemObj, id: itemId, _id: itemId };
+        }));
+
         if (hasNextPage) {
             nextCursor = resultItems[resultItems.length - 1]._id.toString();
         }
 
-        return { items: resultItems, nextCursor };
+        return { items: transformedItems, nextCursor };
     }
 }
 
