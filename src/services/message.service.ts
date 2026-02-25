@@ -15,7 +15,7 @@ export class MessageService {
             .sort({ updatedAt: -1 })
             .populate({
                 path: 'participantIds',
-                select: 'name username image'
+                select: 'name username image isVerified'
             })
             .populate({
                 path: 'lastMessageId'
@@ -40,7 +40,7 @@ export class MessageService {
         const conv = await Conversation.findById(conversationId)
             .populate({
                 path: 'participantIds',
-                select: 'name username image'
+                select: 'name username image isVerified'
             });
 
         if (!conv) return null;
@@ -78,7 +78,7 @@ export class MessageService {
         };
     }
 
-    async sendMessage(conversationId: string, senderId: string, text: string) {
+    async sendMessage(conversationId: string, senderId: string, text?: string, attachments?: string[], type: 'text' | 'call' = 'text', callData?: any) {
         const conv = await Conversation.findById(conversationId);
         if (!conv) throw new Error('Conversation not found');
         if (!conv.participantIds.includes(new Types.ObjectId(senderId))) throw new Error('Forbidden');
@@ -87,6 +87,9 @@ export class MessageService {
             conversationId: new Types.ObjectId(conversationId),
             senderId: new Types.ObjectId(senderId),
             text,
+            attachments,
+            type,
+            callData,
             status: 'sent'
         });
 
@@ -106,7 +109,7 @@ export class MessageService {
                     recipientId: pid,
                     actorId: new Types.ObjectId(senderId),
                     type: NotificationType.MESSAGE,
-                    commentText: text.substring(0, 100) // Preview text
+                    commentText: text ? text.substring(0, 100) : 'Sent an image'
                 });
             }
         });
@@ -135,30 +138,36 @@ export class MessageService {
 
     async startConversation(userId: string, targetUserId: string) {
         // Restriction: Only allow chatting if they follow each other (mutual follow) or some criteria
-        // USER requested "fix chatting features to followers"
-        const followCheck = await Follow.findOne({
-            follower: new Types.ObjectId(targetUserId),
-            following: new Types.ObjectId(userId)
-        });
+        // Allow self-messaging
+        if (userId !== targetUserId) {
+            const followCheck = await Follow.findOne({
+                follower: new Types.ObjectId(targetUserId),
+                following: new Types.ObjectId(userId)
+            });
 
-        if (!followCheck) {
-            throw new Error('You can only message users who follow you');
+            if (!followCheck) {
+                throw new Error('You can only message users who follow you');
+            }
         }
 
         // Check existing
+        const participants = userId === targetUserId
+            ? [new Types.ObjectId(userId)]
+            : [new Types.ObjectId(userId), new Types.ObjectId(targetUserId)];
+
         let conv = await Conversation.findOne({
-            participantIds: { $all: [new Types.ObjectId(userId), new Types.ObjectId(targetUserId)], $size: 2 }
+            participantIds: { $all: participants, $size: participants.length }
         });
 
-        if (conv) return conv;
+        if (conv) return { ...conv.toObject(), id: conv._id };
 
         // Create new
         const newConv = await Conversation.create({
-            participantIds: [new Types.ObjectId(userId), new Types.ObjectId(targetUserId)],
+            participantIds: participants,
             unreadCounts: new Map()
         });
 
-        return newConv;
+        return { ...newConv.toObject(), id: newConv._id };
     }
 
     async getUnreadCount(userId: string) {
