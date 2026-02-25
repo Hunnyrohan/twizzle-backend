@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 export const sendMessageSchema = z.object({
     body: z.object({
-        text: z.string().min(1).max(1000),
+        text: z.string().max(1000).optional(),
+        type: z.enum(['text', 'call']).optional(),
+        callData: z.any().optional(),
     }),
 });
 
