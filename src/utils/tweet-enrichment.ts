@@ -42,6 +42,8 @@ export const enrichTweets = async (tweets: any[], userId: string | null) => {
 
         return {
             ...tweetObj,
+            _id: id,
+            id: id,
             isLiked: !!userInteractions[InteractionType.LIKE],
             isRetweeted: !!userInteractions[InteractionType.RETWEET],
             isBookmarked: !!userInteractions[InteractionType.BOOKMARK]
