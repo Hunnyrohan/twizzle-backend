@@ -4,6 +4,7 @@ import User from '../models/user.model';
 import Follow from '../models/follow.model';
 import Notification, { NotificationType } from '../models/notification.model';
 import { Types } from 'mongoose';
+import { io } from '../app';
 
 export class MessageService {
 
@@ -18,16 +19,29 @@ export class MessageService {
                 select: 'name username image isVerified'
             })
             .populate({
-                path: 'lastMessageId'
+                path: 'lastMessageId',
+                populate: {
+                    path: 'senderId',
+                    select: 'name username image'
+                }
             });
 
         const enriched = conversations.map(conv => {
-            const otherUser = conv.participantIds.find(p => p._id.toString() !== userId);
+            let otherUser = conv.participantIds.find(p => p._id.toString() !== userId);
+
+            // Convert to plain object to ensure all Mongoose transforms (like image paths) apply
+            let otherUserObj = otherUser
+                ? (typeof (otherUser as any).toObject === 'function' ? (otherUser as any).toObject({ virtuals: true }) : otherUser)
+                : { id: 'unknown', name: 'Unknown User', username: 'unknown' };
+
+            let lastMsgObj = conv.lastMessageId
+                ? (typeof (conv.lastMessageId as any).toObject === 'function' ? (conv.lastMessageId as any).toObject({ virtuals: true }) : conv.lastMessageId)
+                : null;
 
             return {
-                id: conv._id,
-                otherUser: otherUser || { id: 'unknown', name: 'Unknown User', username: 'unknown' },
-                lastMessage: conv.lastMessageId,
+                id: conv._id.toString(),
+                otherUser: otherUserObj,
+                lastMessage: lastMsgObj,
                 unreadCount: conv.unreadCounts.get(userId) || 0,
                 updatedAt: conv.updatedAt
             };
@@ -59,14 +73,18 @@ export class MessageService {
         if (!conv) throw new Error('Conversation not found');
         if (!conv.participantIds.includes(new Types.ObjectId(userId))) throw new Error('Forbidden');
 
-        const query: any = { conversationId: new Types.ObjectId(conversationId) };
+        const query: any = {
+            conversationId: new Types.ObjectId(conversationId),
+            deletedFor: { $ne: new Types.ObjectId(userId) }
+        };
         if (cursor) {
             query._id = { $lt: new Types.ObjectId(cursor) };
         }
 
         const messages = await Message.find(query)
             .sort({ _id: -1 })
-            .limit(limit + 1);
+            .limit(limit + 1)
+            .populate('senderId', 'name username image');
 
         const hasNextPage = messages.length > limit;
         const items = hasNextPage ? messages.slice(0, limit) : messages;
@@ -78,7 +96,7 @@ export class MessageService {
         };
     }
 
-    async sendMessage(conversationId: string, senderId: string, text?: string, attachments?: string[], type: 'text' | 'call' = 'text', callData?: any) {
+    async sendMessage(conversationId: string, senderId: string, text?: string, attachments?: string[], type: 'text' | 'call' | 'image' = 'text', callData?: any) {
         const conv = await Conversation.findById(conversationId);
         if (!conv) throw new Error('Conversation not found');
         if (!conv.participantIds.includes(new Types.ObjectId(senderId))) throw new Error('Forbidden');
@@ -116,7 +134,19 @@ export class MessageService {
 
         await conv.save();
 
-        return newMessage;
+        // Return populated message
+        const populatedMessage = await Message.findById(newMessage._id).populate('senderId', 'name username image');
+
+        // Emit socket event to participants
+        conv.participantIds.forEach(pid => {
+            const pidStr = pid.toString();
+            io.emit(`new_message:${pidStr}`, populatedMessage);
+        });
+
+        // Universal event for the active conversation
+        io.emit('new_message', populatedMessage);
+
+        return populatedMessage || newMessage;
     }
 
     async markRead(conversationId: string, userId: string) {
@@ -180,6 +210,30 @@ export class MessageService {
         }, 0);
 
         return totalUnread;
+    }
+
+    async deleteMessage(messageId: string, userId: string, type: 'me' | 'everyone') {
+        const message = await Message.findById(messageId);
+        if (!message) throw new Error('Message not found');
+        const conv = await Conversation.findById(message.conversationId);
+        if (!conv || !conv.participantIds.some(p => p.toString() === userId)) throw new Error('Forbidden');
+
+        if (type === 'me') {
+            const uid = new Types.ObjectId(userId);
+            if (!message.deletedFor.some(id => id.equals(uid))) {
+                message.deletedFor.push(uid);
+                await message.save();
+            }
+        } else {
+            if (message.senderId.toString() !== userId) throw new Error('Only sender can unsend');
+            message.isDeletedEveryone = true;
+            message.text = 'This message was removed';
+            message.attachments = [];
+            await message.save();
+        }
+
+        io.emit('message_deleted', { messageId, conversationId: message.conversationId, type, userId });
+        return { success: true };
     }
 }
 
