@@ -9,6 +9,7 @@ export interface ITweet extends Document {
     repliesCount: number;
     parentTweet?: Types.ObjectId; // For replies
     retweetOf?: Types.ObjectId; // For retweets
+    location?: string; // Sensor 2: GPS Location
     createdAt: Date;
     updatedAt: Date;
 }
@@ -23,6 +24,7 @@ const tweetSchema = new Schema<ITweet>(
         repliesCount: { type: Number, default: 0 },
         parentTweet: { type: Schema.Types.ObjectId, ref: 'Tweet' },
         retweetOf: { type: Schema.Types.ObjectId, ref: 'Tweet' },
+        location: { type: String },
     },
     { timestamps: true }
 );
