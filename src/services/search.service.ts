@@ -54,16 +54,28 @@ export class SearchService {
             }
 
             case 'media': {
+                // Find users matching the query to also include their media-rich tweets
+                const matchingUsers = await User.find({
+                    $or: [
+                        { username: { $regex: q, $options: 'i' } },
+                        { name: { $regex: q, $options: 'i' } }
+                    ]
+                }).select('_id');
+                const userIds = matchingUsers.map(u => u._id);
+
                 const searchCriteria: any = {
                     media: { $exists: true, $not: { $size: 0 } },
-                    content: { $regex: q, $options: 'i' }
+                    $or: [
+                        { content: { $regex: q, $options: 'i' } },
+                        { author: { $in: userIds } }
+                    ]
                 };
                 if (cursor) searchCriteria._id = { $lt: new Types.ObjectId(cursor) };
 
                 items = await Tweet.find(searchCriteria)
                     .sort({ _id: -1 })
                     .limit(limit + 1)
-                    .populate('author', 'name username image');
+                    .populate('author', 'name username image isVerified');
                 break;
             }
 
