@@ -8,6 +8,7 @@ const router = Router();
 
 router.use(authMiddleware, adminOnly);
 
+router.get('/stats', adminController.getStats);
 router.post('/users', upload.single('image'), adminController.createUser);
 router.get('/users', adminController.getUsers);
 router.get('/users/:id', adminController.getUser);
