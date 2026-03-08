@@ -5,7 +5,7 @@ import Tweet from '../models/tweet.model';
 
 export const getNotifications = async (req: Request, res: Response) => {
     try {
-        const userId = req.user._id;
+        const userId = (req as any).user._id;
         const { type = 'all', cursor, limit = '10' } = req.query;
         const limitNum = parseInt(limit as string);
 
@@ -23,6 +23,7 @@ export const getNotifications = async (req: Request, res: Response) => {
                 mentions: NotificationType.MENTION,
                 comments: NotificationType.COMMENT,
                 bookmarks: NotificationType.BOOKMARK,
+                reposts: NotificationType.REPOST,
             };
             if (typeMap[type as string]) {
                 query.type = typeMap[type as string];
@@ -68,17 +69,20 @@ export const getNotifications = async (req: Request, res: Response) => {
             };
 
             const postPreview = notif.postId && typeof notif.postId === 'object' ? {
-                _id: notif.postId._id,
+                _id: notif.postId._id?.toString() || notif.postId.id,
                 content: notif.postId.content || '',
                 image: notif.postId.media?.[0],
             } : null;
 
             return {
-                _id: notif._id,
+                _id: notif._id.toString(),
                 type: notif.type,
                 isRead: notif.isRead,
                 createdAt: notif.createdAt,
                 actor,
+                postId: notif.postId && typeof notif.postId === 'object'
+                    ? notif.postId._id?.toString()
+                    : notif.postId?.toString(),
                 postPreview,
                 commentText: notif.commentText,
             };
@@ -105,7 +109,7 @@ export const getNotifications = async (req: Request, res: Response) => {
 
 export const getUnreadCount = async (req: Request, res: Response) => {
     try {
-        const userId = req.user._id;
+        const userId = (req as any).user._id;
 
         const count = await Notification.countDocuments({
             recipientId: userId,
@@ -131,7 +135,7 @@ export const getUnreadCount = async (req: Request, res: Response) => {
 
 export const markAllAsRead = async (req: Request, res: Response) => {
     try {
-        const userId = req.user._id;
+        const userId = (req as any).user._id;
 
         await Notification.updateMany(
             { recipientId: userId, isRead: false },
@@ -156,7 +160,7 @@ export const markAllAsRead = async (req: Request, res: Response) => {
 
 export const markAsRead = async (req: Request, res: Response) => {
     try {
-        const userId = req.user._id;
+        const userId = (req as any).user._id;
         const { id } = req.params;
 
         const notification = await Notification.findOne({
