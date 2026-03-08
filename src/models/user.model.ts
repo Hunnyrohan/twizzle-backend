@@ -19,6 +19,7 @@ export interface IUser extends Document {
     messagePermission: 'everyone' | 'following' | 'nobody';
     mutedWords: string[];
     blockedUsers: string[]; // ObjectIds
+    notInterestedTweets: string[]; // ObjectIds
   };
   notifications: {
     likes: boolean;
@@ -29,6 +30,14 @@ export interface IUser extends Document {
   };
   theme: 'light' | 'dark' | 'system';
   tokenVersion: number;
+  isActive: boolean;
+  isVerified: boolean;
+  verifiedAt?: Date;
+  verificationProvider?: 'ESEWA';
+  verificationTxnId?: string;
+  verificationRefId?: string;
+  resetPasswordToken?: string;
+  resetPasswordExpires?: Date;
   comparePassword(password: string): Promise<boolean>;
 }
 
@@ -52,7 +61,8 @@ const userSchema = new Schema<IUser>(
       profileVisibility: { type: String, enum: ['public', 'private'], default: 'public' },
       messagePermission: { type: String, enum: ['everyone', 'following', 'nobody'], default: 'everyone' },
       mutedWords: [String],
-      blockedUsers: [{ type: Schema.Types.ObjectId, ref: 'User' }]
+      blockedUsers: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+      notInterestedTweets: [{ type: Schema.Types.ObjectId, ref: 'Tweet' }]
     },
     notifications: {
       likes: { type: Boolean, default: true },
@@ -62,28 +72,39 @@ const userSchema = new Schema<IUser>(
       messages: { type: Boolean, default: true }
     },
     theme: { type: String, enum: ['light', 'dark', 'system'], default: 'system' },
-    tokenVersion: { type: Number, default: 0 }
+    tokenVersion: { type: Number, default: 0 },
+    isActive: { type: Boolean, default: true },
+    isVerified: { type: Boolean, default: false },
+    verifiedAt: { type: Date },
+    verificationProvider: { type: String, enum: ['ESEWA'] },
+    verificationTxnId: { type: String },
+    verificationRefId: { type: String },
+    resetPasswordToken: { type: String },
+    resetPasswordExpires: { type: Date }
   },
   {
     timestamps: true,
     toJSON: {
+      virtuals: true,
       transform: (doc, ret) => {
-        if (ret.image && !ret.image.startsWith('http')) {
-          ret.image = `http://localhost:5000/${ret.image}`;
+        // Strip any base URL and return relative path
+        if (ret.image && typeof ret.image === 'string' && ret.image.includes('/uploads/')) {
+          ret.image = ret.image.substring(ret.image.indexOf('uploads/'));
         }
-        if (ret.coverImage && !ret.coverImage.startsWith('http')) {
-          ret.coverImage = `http://localhost:5000/${ret.coverImage}`;
+        if (ret.coverImage && typeof ret.coverImage === 'string' && ret.coverImage.includes('/uploads/')) {
+          ret.coverImage = ret.coverImage.substring(ret.coverImage.indexOf('uploads/'));
         }
         return ret;
       }
     },
     toObject: {
+      virtuals: true,
       transform: (doc, ret) => {
-        if (ret.image && !ret.image.startsWith('http')) {
-          ret.image = `http://localhost:5000/${ret.image}`;
+        if (ret.image && typeof ret.image === 'string' && ret.image.includes('/uploads/')) {
+          ret.image = ret.image.substring(ret.image.indexOf('uploads/'));
         }
-        if (ret.coverImage && !ret.coverImage.startsWith('http')) {
-          ret.coverImage = `http://localhost:5000/${ret.coverImage}`;
+        if (ret.coverImage && typeof ret.coverImage === 'string' && ret.coverImage.includes('/uploads/')) {
+          ret.coverImage = ret.coverImage.substring(ret.coverImage.indexOf('uploads/'));
         }
         return ret;
       }
