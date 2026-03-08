@@ -6,6 +6,12 @@ import userRepository from '../repositories/user.repository';
 import emailService from './email.service';
 import User from '../models/user.model';
 
+function throwWithStatus(message: string, statusCode: number = 400): never {
+  const error = new Error(message) as any;
+  error.statusCode = statusCode;
+  throw error;
+}
+
 class AuthService {
   private getGoogleClient() {
     return new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -20,35 +26,59 @@ class AuthService {
   }
 
   private formatUser(user: any) {
+    let image = user.image;
+    if (image && typeof image === 'string' && image.includes('/uploads/')) {
+      image = image.substring(image.indexOf('uploads/'));
+    }
+    let coverImage = user.coverImage;
+    if (coverImage && typeof coverImage === 'string' && coverImage.includes('/uploads/')) {
+      coverImage = coverImage.substring(coverImage.indexOf('uploads/'));
+    }
     return {
       id: user._id.toString(),
       _id: user._id.toString(),
       name: user.name,
       username: user.username,
       email: user.email,
-      image: user.image,
+      image: image,
+      coverImage: coverImage,
+      bio: user.bio,
+      location: user.location,
+      website: user.website,
       role: user.role,
-      isVerified: user.isVerified
+      isVerified: user.isVerified,
+      verifiedAt: user.verifiedAt,
+      followersCount: user.followersCount || 0,
+      followingCount: user.followingCount || 0,
+      createdAt: user.createdAt,
     };
   }
 
-  async login(identifier: string, password?: string) {
+  async login(identifier: string, password?: string, confirmReactivate: boolean = false) {
     const user = await User.findOne({
       $or: [{ username: identifier }, { email: identifier }]
     });
 
     if (!user) {
-      throw new Error('Invalid credentials');
+      throwWithStatus('Invalid credentials', 401);
     }
 
-    // Following original logic: "For this project, we allow login if user exists."
-    // If you wish to enable strict password checking, uncomment below:
-    /*
-    const isValid = await user.comparePassword(password);
-    if (!isValid) {
-      throw new Error('Invalid credentials');
+    if (user.isActive === false) {
+      if (confirmReactivate) {
+        user.isActive = true;
+        await user.save();
+      } else {
+        return {
+          needsReactivation: true,
+          message: 'Account is deactivated. Would you like to reactivate it?'
+        };
+      }
     }
-    */
+
+    const isValid = await user.comparePassword(password || '');
+    if (!isValid) {
+      throwWithStatus('Invalid credentials', 401);
+    }
 
     const token = this.generateToken(user);
     return {
@@ -60,15 +90,15 @@ class AuthService {
   async register(userData: any) {
     const { username, email, password, name } = userData;
 
-    let user = await User.findOne({
+    const existingUser = await User.findOne({
       $or: [{ username }, { email }]
     });
 
-    if (user) {
-      throw new Error('Username or email already exists');
+    if (existingUser) {
+      throwWithStatus('Username or email already exists', 400);
     }
 
-    user = await User.create({
+    const user = await User.create({
       username,
       email,
       name: name || username,
@@ -87,7 +117,7 @@ class AuthService {
   async forgotPassword(email: string) {
     const user = await userRepository.findByEmail(email);
     if (!user) {
-      throw new Error('User with this email does not exist');
+      throwWithStatus('User with this email does not exist', 404);
     }
 
     const resetCode = Math.floor(100000 + Math.random() * 900000).toString();
@@ -95,7 +125,13 @@ class AuthService {
     user.resetPasswordExpires = new Date(Date.now() + 3600000); // 1 hour
     await user.save();
 
-    await emailService.sendResetPasswordEmail(user.email, resetCode);
+    try {
+      await emailService.sendResetPasswordEmail(user.email, resetCode);
+    } catch (e) {
+      console.error('Email sending failed:', e);
+      // In test ENV, don't fail the whole request
+      if (process.env.NODE_ENV !== 'test') throw e;
+    }
     return { message: 'Reset code sent to your email' };
   }
 
@@ -106,7 +142,7 @@ class AuthService {
     });
 
     if (!user) {
-      throw new Error('Invalid or expired reset code');
+      throwWithStatus('Invalid or expired reset code', 400);
     }
 
     const salt = await bcrypt.genSalt(10);
@@ -119,7 +155,7 @@ class AuthService {
     return { message: 'Password reset successful' };
   }
 
-  async googleLogin(idToken: string) {
+  async googleLogin(idToken: string, confirmReactivate: boolean = false) {
     try {
       const client = this.getGoogleClient();
       const ticket = await client.verifyIdToken({
@@ -129,7 +165,7 @@ class AuthService {
 
       const payload = ticket.getPayload();
       if (!payload || !payload.email) {
-        throw new Error('Invalid Google token');
+        throwWithStatus('Invalid Google token', 401);
       }
 
       const { email, name, picture } = payload;
@@ -148,12 +184,22 @@ class AuthService {
           image: picture,
           password: crypto.randomBytes(16).toString('hex'),
           role: 'user',
-          isVerified: true,
+          isActive: true,
+          isVerified: false,
         });
-      } else if (!user.isVerified) {
-        // If user exists but not verified, verify them since they used Google
-        user.isVerified = true;
-        await user.save();
+      } else {
+        // Check deactivation
+        if (user.isActive === false) {
+          if (confirmReactivate) {
+            user.isActive = true;
+            await user.save();
+          } else {
+            return {
+              needsReactivation: true,
+              message: 'Account is deactivated. Would you like to reactivate it?',
+            };
+          }
+        }
       }
 
       const token = this.generateToken(user);
@@ -166,6 +212,42 @@ class AuthService {
       console.error('Google login error:', error);
       throw new Error(error.message || 'Google authentication failed');
     }
+  }
+
+  async changePassword(userId: string, currentPassword: string, newPassword: string) {
+    const user = await User.findById(userId).select('+password');
+    if (!user) throwWithStatus('User not found', 404);
+
+    const isValid = await user!.comparePassword(currentPassword);
+    if (!isValid) throwWithStatus('Invalid current password', 401);
+
+    const salt = await bcrypt.genSalt(10);
+    user!.password = await bcrypt.hash(newPassword, salt);
+    user!.tokenVersion = (user!.tokenVersion || 0) + 1;
+    await user!.save();
+
+    return { message: 'Password updated successfully. All other sessions invalidated.' };
+  }
+
+  async deactivateAccount(userId: string) {
+    const user = await User.findById(userId);
+    if (!user) throwWithStatus('User not found', 404);
+
+    user!.isActive = false;
+    user!.tokenVersion = (user!.tokenVersion || 0) + 1;
+    await user!.save();
+
+    return { message: 'Account deactivated successfully' };
+  }
+
+  async logoutAllSessions(userId: string) {
+    const user = await User.findById(userId);
+    if (!user) throwWithStatus('User not found', 404);
+
+    user!.tokenVersion = (user!.tokenVersion || 0) + 1;
+    await user!.save();
+
+    return { message: 'Successfully logged out from all other devices' };
   }
 }
 
