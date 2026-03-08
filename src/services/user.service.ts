@@ -17,7 +17,7 @@ export class UserService {
             isFollowing = !!follow;
         }
 
-        return this.mapUser(user, isFollowing);
+        return this.mapUser(user, isFollowing, currentUserId);
     }
 
     public async findByUsername(username: string, currentUserId?: string): Promise<any | undefined> {
@@ -25,7 +25,8 @@ export class UserService {
         if (!user) return undefined;
 
         let isFollowing = false;
-        if (currentUserId && currentUserId !== user._id.toString()) {
+        const id = user._id.toString();
+        if (currentUserId && currentUserId !== id) {
             const follow = await Follow.findOne({
                 follower: new Types.ObjectId(currentUserId),
                 following: user._id
@@ -33,7 +34,7 @@ export class UserService {
             isFollowing = !!follow;
         }
 
-        return this.mapUser(user, isFollowing);
+        return this.mapUser(user, isFollowing, currentUserId);
     }
 
     public async toggleFollow(followerId: string, followingId: string): Promise<{ isFollowing: boolean }> {
@@ -80,40 +81,58 @@ export class UserService {
         }
     }
 
-    // Helper for auth (kept for compatibility if needed, but auth.controller uses User model directly now)
+    // Helper for auth
     public async createUser(username: string): Promise<any> {
         const newUser = await User.create({
             username,
             name: username,
             email: `${username}@example.com`,
-            password: 'password', // Default
+            password: 'password',
             role: 'user',
             image: `https://api.dicebear.com/7.x/avataaars/svg?seed=${username}`
         });
         return this.mapUser(newUser);
     }
 
-    private mapUser(user: IUser, isFollowing: boolean = false) {
+    private formatImagePath(path: string | undefined): string | undefined {
+        if (!path || typeof path !== 'string') return path;
+        const normalized = path.replace(/\\/g, '/');
+        const index = normalized.indexOf('uploads/');
+        if (index !== -1) {
+            return normalized.substring(index);
+        }
+        return path;
+    }
+
+    private mapUser(user: IUser, isFollowing: boolean = false, currentUserId?: string) {
+        const image = this.formatImagePath(user.image);
+        const coverImage = this.formatImagePath(user.coverImage);
+        const id = user._id.toString();
+        const isSelf = currentUserId ? currentUserId === id : false;
+
+        const defaultAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.name || user.username || 'User')}&background=random&size=256`;
+
         return {
-            id: user._id.toString(),
-            _id: user._id.toString(), // Ensure both id and _id are available
+            id,
+            _id: id,
             username: user.username,
-            displayName: user.name, // Map name to displayName
+            displayName: user.name,
             name: user.name,
             email: user.email,
-            image: user.image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.username}`, // Provide 'image' for frontend compatibility
-            avatarUrl: user.image || `https://api.dicebear.com/7.x/avataaars/svg?seed=${user.username}`, // Keep avatarUrl for safety
-            coverImage: user.coverImage,
+            image: image || defaultAvatar,
+            avatarUrl: image || defaultAvatar,
+            coverImage: coverImage,
             verified: user.isVerified || false,
             isVerified: user.isVerified || false,
             bio: user.bio,
             location: user.location,
             website: user.website,
-            followersCount: user.followersCount,
-            followingCount: user.followingCount,
-            isFollowing, // Return the status
+            followersCount: user.followersCount || 0,
+            followingCount: user.followingCount || 0,
+            isFollowing,
+            isSelf,
             createdAt: (user as any).createdAt,
-            tokenVersion: user.tokenVersion
+            tokenVersion: user.tokenVersion || 0
         };
     }
 
@@ -124,7 +143,7 @@ export class UserService {
             { new: true }
         );
         if (!user) throw new Error('User not found');
-        return this.mapUser(user);
+        return this.mapUser(user, false, userId);
     }
 
     public async updateUser(userId: string, data: Partial<IUser>): Promise<any> {
@@ -134,7 +153,7 @@ export class UserService {
             { new: true }
         );
         if (!user) throw new Error('User not found');
-        return this.mapUser(user);
+        return this.mapUser(user, false, userId);
     }
 
     public async updateCoverImage(userId: string, coverUrl: string): Promise<any> {
@@ -144,21 +163,55 @@ export class UserService {
             { new: true }
         );
         if (!user) throw new Error('User not found');
-        return this.mapUser(user);
+        return this.mapUser(user, false, userId);
     }
 
-    public async getFollowers(userId: string): Promise<any[]> {
+    public async getFollowers(userId: string, currentUserId?: string): Promise<any[]> {
         const follows = await Follow.find({ following: new Types.ObjectId(userId) })
             .populate('follower');
 
-        return follows.map(f => this.mapUser(f.follower as any));
+        const followers = follows.map(f => f.follower as any);
+
+        let followingIds: string[] = [];
+        if (currentUserId) {
+            const userFollowing = await Follow.find({ follower: new Types.ObjectId(currentUserId) }).select('following');
+            followingIds = userFollowing.map(f => f.following.toString());
+            console.log(`[UserService] getFollowers currentUserId: ${currentUserId}, followingIdsCount: ${followingIds.length}`);
+        }
+
+        return followers.map(u => {
+            if (!u) return null;
+            const cid = u._id.toString();
+            const isFollowing = currentUserId
+                ? (currentUserId === cid ? false : followingIds.includes(cid))
+                : false;
+            console.log(`[UserService] Follower: ${u.username}, CID: ${cid}, isFollowing: ${isFollowing}`);
+            return this.mapUser(u, isFollowing, currentUserId);
+        }).filter(u => u !== null);
     }
 
-    public async getFollowing(userId: string): Promise<any[]> {
+    public async getFollowing(userId: string, currentUserId?: string): Promise<any[]> {
         const follows = await Follow.find({ follower: new Types.ObjectId(userId) })
             .populate('following');
 
-        return follows.map(f => this.mapUser(f.following as any));
+        const following = follows.map(f => f.following as any);
+
+        let followingIds: string[] = [];
+        if (currentUserId) {
+            const userFollowing = await Follow.find({ follower: new Types.ObjectId(currentUserId) }).select('following');
+            followingIds = userFollowing.map(f => f.following.toString());
+            console.log(`[UserService] getFollowing currentUserId: ${currentUserId}, followingIdsCount: ${followingIds.length}`);
+        }
+
+        return following.map(u => {
+            if (!u) return null;
+            const cid = u._id.toString();
+            const isFollowing = currentUserId
+                ? (currentUserId === cid ? false : followingIds.includes(cid))
+                : false;
+            console.log(`[UserService] Following: ${u.username}, CID: ${cid}, isFollowing: ${isFollowing}`);
+            return this.mapUser(u, isFollowing, currentUserId);
+        }).filter(u => u !== null);
     }
 }
 
