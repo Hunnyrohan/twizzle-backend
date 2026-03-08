@@ -12,7 +12,7 @@ export const getBlocks = async (req: Request, res: Response) => {
 
         return res.status(200).json({
             success: true,
-            data: user.privacy.blockedUsers || []
+            data: user.privacy?.blockedUsers || []
         });
     } catch (error) {
         return res.status(500).json({ success: false, message: 'Failed to fetch blocks' });
@@ -34,10 +34,26 @@ export const toggleBlock = async (req: Request, res: Response) => {
         const user = await User.findById(currentUserId);
         if (!user) return res.status(404).json({ success: false, message: 'User not found' });
 
-        const targetId = new mongoose.Types.ObjectId(userId);
+        const targetId = new mongoose.Types.ObjectId(userId as string);
+        const targetUser = await User.findById(targetId);
+        if (!targetUser) return res.status(404).json({ success: false, message: 'Target user not found' });
+
+        // Ensure privacy and blockedUsers array exists
+        if (!user.privacy) {
+            user.privacy = {
+                profileVisibility: 'public',
+                messagePermission: 'everyone',
+                mutedWords: [],
+                blockedUsers: []
+            };
+        }
+        if (!user.privacy.blockedUsers) {
+            user.privacy.blockedUsers = [];
+        }
 
         // Check if already blocked
         const isBlocked = user.privacy.blockedUsers.some(id => id.toString() === userId);
+
 
         if (isBlocked) {
             // Unblock
@@ -46,7 +62,7 @@ export const toggleBlock = async (req: Request, res: Response) => {
             return res.status(200).json({ success: true, message: 'User unblocked' });
         } else {
             // Block
-            user.privacy.blockedUsers.push(targetId as any);
+            (user.privacy.blockedUsers as any).push(targetId);
             await user.save();
             return res.status(200).json({ success: true, message: 'User blocked' });
         }
