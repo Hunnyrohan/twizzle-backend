@@ -22,15 +22,19 @@ import messageRoutes from './routes/message.routes';
 import exploreRoutes from './routes/explore.routes';
 import searchRoutes from './routes/search.routes';
 import bookmarkRoutes from './routes/bookmark.routes';
+import paymentRoutes from './routes/payment.routes';
+import notInterestedRoutes from './routes/not-interested.routes';
 
 dotenv.config();
 
 const app: Application = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer, {
+export const io = new Server(httpServer, {
   cors: {
-    origin: 'http://localhost:3000',
-    credentials: true,
+    // Flutter (socket_io_client) doesn't send a browser Origin header.
+    // Restricting origin here blocks Flutter connections, so we allow all.
+    origin: '*',
+    methods: ['GET', 'POST'],
   },
 });
 
@@ -59,19 +63,22 @@ io.on('connection', (socket) => {
   };
 
   // Calling Signaling
-  socket.on('call:user', ({ to, offer, callType, callerName, callerImage, conversationId }: any) => {
+  socket.on('call:user', ({ to, offer, callType, callerName, callerImage, conversationId, isVerified }: any) => {
     const from = socketIdToUserId.get(socket.id);
     if (!from) {
-      console.warn('Call attempt from unknown socket:', socket.id);
+      console.warn('Call attempt from unknown socket (not joined):', socket.id);
+      console.warn('Known sockets:', [...socketIdToUserId.keys()]);
       return;
     }
+    console.log(`Call from ${from} to ${to}, type: ${callType}`);
     emitToUser(to, 'incomming:call', {
       from,
       offer,
       callType,
       callerName,
       callerImage,
-      conversationId
+      conversationId,
+      isVerified: !!isVerified,
     });
   });
 
@@ -111,13 +118,13 @@ io.on('connection', (socket) => {
   });
 });
 
-// Connect Database
-connectDB();
-
 // Middlewares
 app.use(
   cors({
-    origin: 'http://localhost:3000',
+    origin: (origin, callback) => {
+      // Allow any origin in development to support both localhost and network IP
+      callback(null, true);
+    },
     credentials: true,
   })
 );
@@ -146,6 +153,8 @@ app.use('/api/blocks', blockRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/bookmarks', bookmarkRoutes);
+app.use('/api/not-interested', notInterestedRoutes);
+app.use('/api/payments/esewa', paymentRoutes);
 
 // Health check
 app.get('/health', (_req, res) => {
@@ -156,7 +165,18 @@ app.get('/health', (_req, res) => {
 app.use(errorHandler);
 
 // Server
-const PORT = process.env.PORT || 5000;
-httpServer.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+const PORT = process.env.PORT || 5050;
+
+if (process.env.NODE_ENV !== 'test') {
+  // Connect Database only when not testing - tests handle their own connection
+  connectDB();
+
+  httpServer.listen(Number(PORT), '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
+    console.log(`Mobile/Internal access: http://192.168.1.84:${PORT}`);
+    console.log(`Local access: http://localhost:${PORT}`);
+  });
+}
+
+export { app, httpServer };
+export default app;
