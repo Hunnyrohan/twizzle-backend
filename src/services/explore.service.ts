@@ -45,9 +45,18 @@ export class ExploreService {
         });
     }
 
-    public async getHotPosts() {
+    public async getHotPosts(currentUserId?: string) {
+        let blockedIds: any[] = [];
+
+        if (currentUserId) {
+            const currentUser = await User.findById(currentUserId).select('privacy.blockedUsers');
+            blockedIds = currentUser?.privacy?.blockedUsers || [];
+        }
+
+        const matchQuery = blockedIds.length > 0 ? { author: { $nin: blockedIds } } : {};
+
         // Return posts sorted by engagement (likes + reposts)
-        const posts = await Tweet.find()
+        const posts = await Tweet.find(matchQuery)
             .sort({ likesCount: -1, retweetsCount: -1, _id: -1 })
             .limit(20)
             .populate('author', 'name username image isVerified');
