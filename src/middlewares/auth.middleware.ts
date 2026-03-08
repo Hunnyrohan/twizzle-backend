@@ -8,13 +8,10 @@ const authMiddleware = async (
   next: NextFunction
 ) => {
   try {
-    // ✅ READ TOKEN FROM COOKIE
     // ✅ READ TOKEN FROM COOKIE OR HEADER
-    let token = req.cookies?.token;
-
-    if (!token && req.headers.authorization?.startsWith('Bearer')) {
-      token = req.headers.authorization.split(' ')[1];
-    }
+    let token = req.headers.authorization?.startsWith('Bearer')
+      ? req.headers.authorization.split(' ')[1]
+      : req.cookies?.token;
 
     console.log(`Auth Middleware: ${req.method} ${req.path}`, { token: token ? 'Present' : 'Missing' });
 
@@ -74,6 +71,38 @@ const authMiddleware = async (
       success: false,
       message: 'Unauthorized',
     });
+  }
+};
+
+export const optionalAuth = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  try {
+    let token = req.headers.authorization?.startsWith('Bearer')
+      ? req.headers.authorization.split(' ')[1]
+      : req.cookies?.token;
+
+    if (!token) {
+      return next();
+    }
+
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET as string
+    ) as { id: string; tokenVersion?: number };
+
+    const user = await User.findById(decoded.id).lean<IUser>();
+
+    if (user && (decoded.tokenVersion === undefined || user.tokenVersion === decoded.tokenVersion)) {
+      req.user = user;
+    }
+
+    next();
+  } catch (error) {
+    // Fail silently for optional auth
+    next();
   }
 };
 
