@@ -18,12 +18,14 @@ export const search = async (req: Request, res: Response, next: NextFunction) =>
         }
 
         const { q, filter, cursor, limit } = validation.data;
+        const currentUserId = (req as any).user?._id;
 
         const result = await searchService.search({
             query: q || '',
             filter: filter as any,
             cursor,
-            limit
+            limit,
+            currentUserId
         });
 
         return successResponse(res, result);
