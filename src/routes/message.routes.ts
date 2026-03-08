@@ -47,4 +47,6 @@ router.post(
     messageController.startConversation
 );
 
+router.delete('/:messageId', messageController.deleteMessage);
+
 export default router;
