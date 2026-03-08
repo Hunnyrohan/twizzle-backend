@@ -4,7 +4,14 @@ import { successResponse, errorResponse } from '../utils/response';
 
 export const getTrending = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const trends = await exploreService.getTrendingHashtags();
+        let trends = await exploreService.getTrendingHashtags();
+
+        // Auto-initialize hashtags if empty (one-time logic)
+        if (trends.length === 0) {
+            await exploreService.initializeHashtags();
+            trends = await exploreService.getTrendingHashtags();
+        }
+
         return successResponse(res, trends);
     } catch (error) {
         next(error);
@@ -13,8 +20,8 @@ export const getTrending = async (req: Request, res: Response, next: NextFunctio
 
 export const getSuggestions = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        // @ts-ignore - Assuming req.user is populated by auth middleware
-        const currentUserId = req.user?.id;
+        // @ts-ignore - req.user populated by optionalAuth middleware
+        const currentUserId = req.user?._id?.toString();
         const suggestions = await exploreService.getSuggestedCreators(currentUserId);
         return successResponse(res, suggestions);
     } catch (error) {
@@ -24,7 +31,9 @@ export const getSuggestions = async (req: Request, res: Response, next: NextFunc
 
 export const getHotPosts = async (req: Request, res: Response, next: NextFunction) => {
     try {
-        const posts = await exploreService.getHotPosts();
+        // @ts-ignore
+        const currentUserId = req.user?._id?.toString();
+        const posts = await exploreService.getHotPosts(currentUserId);
         return successResponse(res, posts);
     } catch (error) {
         next(error);
