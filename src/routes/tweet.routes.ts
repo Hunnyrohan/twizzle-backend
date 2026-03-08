@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { createTweet, getFeed, getTweet, deleteTweet, likeTweet, unlikeTweet, retweet, searchTweets, getTweetComments, createComment } from '../controllers/tweet.controller';
+import { createTweet, getFeed, getTweet, getTweetComments, createComment, deleteTweet, likeTweet, unlikeTweet, retweet, unretweet, searchTweets } from '../controllers/tweet.controller';
 import authMiddleware from '../middlewares/auth.middleware';
 import optionalAuth from '../middlewares/optional-auth.middleware';
 import { upload } from '../config/multer.config';
@@ -19,6 +19,7 @@ router.delete('/:id', authMiddleware, deleteTweet);
 router.post('/:id/like', authMiddleware, likeTweet);
 router.delete('/:id/like', authMiddleware, unlikeTweet);
 router.post('/:id/retweet', authMiddleware, retweet);
+router.delete('/:id/retweet', authMiddleware, unretweet);
 
 import { toggleBookmark } from '../controllers/bookmark.controller';
 router.post('/:postId/bookmark', authMiddleware, toggleBookmark); // Requirement says /api/posts/:postId/bookmark
