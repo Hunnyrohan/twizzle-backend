@@ -6,7 +6,7 @@ export const getSettings = async (req: Request, res: Response) => {
         if (!req.user) {
             return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
-        const user = await User.findById(req.user._id).select('privacy notifications theme');
+        const user = await User.findById(req.user._id).select('privacy notifications theme isVerified image name username');
         if (!user) {
             return res.status(404).json({ success: false, message: 'User not found' });
         }
@@ -15,7 +15,14 @@ export const getSettings = async (req: Request, res: Response) => {
             data: {
                 privacy: user.privacy,
                 notifications: user.notifications,
-                theme: user.theme
+                theme: user.theme,
+                user: {
+                    id: user._id,
+                    name: user.name,
+                    username: user.username,
+                    image: user.image,
+                    isVerified: user.isVerified
+                }
             }
         });
     } catch (error) {
@@ -59,7 +66,14 @@ export const updateSettings = async (req: Request, res: Response) => {
             data: {
                 privacy: user.privacy,
                 notifications: user.notifications,
-                theme: user.theme
+                theme: user.theme,
+                user: {
+                    id: user._id,
+                    name: user.name,
+                    username: user.username,
+                    image: user.image,
+                    isVerified: user.isVerified
+                }
             }
         });
 
