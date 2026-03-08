@@ -18,3 +18,21 @@ yarn-error.log*
 # OS / editor
 .DS_Store
 .vscode/
+
+# generated test/report artifacts
+*_results.txt
+*_results_utf8.txt
+*_debug.txt
+*_fail.txt
+errors.txt
+full_errors.txt
+compile_errors.txt
+db_check.txt
+final_audit.txt
+test_all.txt
+test_all_utf8.txt
+test_msg.txt
+test_msg_utf8.txt
+test_notif.txt
+test_notif_utf8.txt
+test_results.txt
