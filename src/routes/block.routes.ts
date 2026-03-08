@@ -5,6 +5,6 @@ import { getBlocks, toggleBlock } from '../controllers/block.controller';
 const router = Router();
 
 router.get('/', authMiddleware, getBlocks);
-router.post('/:userId/toggle', authMiddleware, toggleBlock);
+router.post('/:userId', authMiddleware, toggleBlock);
 
 export default router;
