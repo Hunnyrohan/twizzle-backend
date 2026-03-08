@@ -2,14 +2,20 @@ import mongoose from 'mongoose';
 
 const connectDB = async (): Promise<void> => {
   try {
-    const conn = await mongoose.connect(
-      process.env.MONGODB_URI as string
-    );
+    const uri = process.env.NODE_ENV === 'test'
+      ? process.env.MONGODB_URI_TEST || 'mongodb://localhost:27017/twizzle_test'
+      : process.env.MONGODB_URI as string;
 
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    const conn = await mongoose.connect(uri);
+
+    if (process.env.NODE_ENV !== 'test') {
+      console.log(`MongoDB Connected: ${conn.connection.host}`);
+    }
   } catch (error) {
     console.error('Database connection error:', error);
-    process.exit(1);
+    if (process.env.NODE_ENV !== 'test') {
+      process.exit(1);
+    }
   }
 };
 
