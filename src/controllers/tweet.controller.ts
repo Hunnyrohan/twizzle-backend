@@ -1,13 +1,14 @@
 import { Request, Response } from 'express';
 import Tweet from '../models/tweet.model';
 import User from '../models/user.model';
+import Interaction, { InteractionType } from '../models/interaction.model'; // Added missing import
 import Notification, { NotificationType } from '../models/notification.model';
 import { upload } from '../config/multer.config';
 import { enrichTweets } from '../utils/tweet-enrichment';
 
 export const createTweet = async (req: Request, res: Response) => {
     try {
-        const { content, parentTweet } = req.body;
+        const { content, parentTweet, location } = req.body;
 
         let mediaFiles: string[] = [];
         if (req.files && Array.isArray(req.files)) {
@@ -26,6 +27,7 @@ export const createTweet = async (req: Request, res: Response) => {
             author: (req.user as any)._id,
             media: mediaFiles,
             parentTweet,
+            location,
         });
 
         if (parentTweet) {
@@ -61,11 +63,30 @@ export const createTweet = async (req: Request, res: Response) => {
             }
         }
 
-        const populatedTweet = await tweet.populate('author', 'name username image');
+        // Hashtag detection (#tag)
+        const hashtags = content.match(/#(\w+)/g);
+        if (hashtags) {
+            const tags: string[] = [...new Set(hashtags.map((h: string) => h.substring(1).toLowerCase()) as string[])];
+            const HashtagModel = require('../models/hashtag.model').default;
+            for (const tag of tags) {
+                await HashtagModel.findOneAndUpdate(
+                    { tag },
+                    {
+                        $inc: { count: 1 },
+                        $set: { lastUsed: new Date() }
+                    },
+                    { upsert: true, new: true }
+                );
+            }
+        }
+
+        const populatedTweet: any = await tweet.populate('author', 'name username image isVerified');
+        const enrichedArray = await enrichTweets([populatedTweet], (req.user as any)._id.toString());
+        const enrichedTweet = enrichedArray[0];
 
         return res.status(201).json({
             success: true,
-            data: populatedTweet,
+            data: enrichedTweet
         });
     } catch (error) {
         return res.status(500).json({
@@ -84,16 +105,53 @@ export const getFeed = async (req: Request, res: Response) => {
         const limit = parseInt(req.query.limit as string) || 10;
         const skip = (page - 1) * limit;
 
-        let matchQuery: any = { parentTweet: null };
+        const { author, filter } = req.query;
+        let matchQuery: any = {};
+        let blockedIdStrings: string[] = [];
 
-        if (req.query.author) {
-            matchQuery.author = req.query.author;
-        } else if (req.user) {
-            const following = await Follow.find({ follower: req.user._id }).select('following');
-            const followingIds = following.map(f => f.following);
-            followingIds.push(req.user._id); // Include own tweets
+        if (req.user) {
+            // Fetch blocked users and not interested tweets to exclude them
+            const currentUser = await User.findById((req.user as any)._id).select('privacy.blockedUsers privacy.notInterestedTweets');
+            const blockedIds = currentUser?.privacy?.blockedUsers || [];
+            const notInterestedIds = (currentUser?.privacy as any)?.notInterestedTweets || [];
+            blockedIdStrings = blockedIds.map((id: any) => id.toString());
 
-            matchQuery.author = { $in: followingIds };
+            // If a specific author profile is requested
+            if (author) {
+                if (blockedIdStrings.includes(author.toString())) {
+                    matchQuery.author = { $in: [] }; // Blocked: return nothing
+                } else {
+                    matchQuery.author = author;
+                }
+            } else {
+                // Main Feed: Include own tweets and following
+                const following = await Follow.find({ follower: (req.user as any)._id }).select('following');
+                const followingIds = following.map(f => f.following);
+                followingIds.push((req.user as any)._id);
+
+                matchQuery.author = {
+                    $in: followingIds,
+                    $nin: blockedIds
+                };
+            }
+
+            // Exclude Not Interested tweets
+            if (notInterestedIds.length > 0) {
+                matchQuery._id = { $nin: notInterestedIds };
+            }
+        } else if (author) {
+            // Unauthenticated: only filter by author if provided
+            matchQuery.author = author;
+        }
+
+        // Apply filters (replies/media/posts)
+        if (filter === 'replies') {
+            matchQuery.parentTweet = { $ne: null };
+        } else if (filter === 'media') {
+            matchQuery.media = { $not: { $size: 0 } };
+        } else {
+            // Default 'posts' filter: only show root tweets
+            matchQuery.parentTweet = null;
         }
 
         const tweets = await Tweet.find(matchQuery)
@@ -106,13 +164,29 @@ export const getFeed = async (req: Request, res: Response) => {
                 populate: { path: 'author', select: 'name username image' }
             });
 
-        const enrichedTweets = await enrichTweets(tweets, req.user?._id?.toString() || null);
+        const enrichedTweets = await enrichTweets(tweets, (req.user as any)?._id?.toString() || null);
+
+        // Strict in-memory filter to catch retweets of blocked users
+        let finalTweets = enrichedTweets;
+        if (blockedIdStrings.length > 0) {
+            finalTweets = enrichedTweets.filter((tweet: any) => {
+                const authorId = tweet.author?._id?.toString() || tweet.author?.id?.toString();
+                if (authorId && blockedIdStrings.includes(authorId)) return false;
+
+                if (tweet.retweetOf?.author) {
+                    const originalAuthorId = tweet.retweetOf.author._id?.toString() || tweet.retweetOf.author.id?.toString();
+                    if (originalAuthorId && blockedIdStrings.includes(originalAuthorId)) return false;
+                }
+                return true;
+            });
+        }
 
         return res.status(200).json({
             success: true,
-            data: enrichedTweets,
+            data: finalTweets,
         });
     } catch (error) {
+        console.error('Get Feed Error:', error);
         return res.status(500).json({
             success: false,
             message: 'Failed to fetch feed',
@@ -137,25 +211,14 @@ export const getTweet = async (req: Request, res: Response) => {
             });
         }
 
-        let isLiked = false;
-        let isRetweeted = false;
-
-        if ((req as any).user) {
-            const [likeParams, retweetParams] = await Promise.all([
-                Interaction.exists({ user: (req as any).user._id, tweet: id, type: InteractionType.LIKE }),
-                Interaction.exists({ user: (req as any).user._id, tweet: id, type: InteractionType.RETWEET })
-            ]);
-            isLiked = !!likeParams;
-            isRetweeted = !!retweetParams;
-        }
+        const [enrichedArray] = await Promise.all([
+            enrichTweets([tweet], (req as any).user?._id?.toString() || null)
+        ]);
+        const enrichedTweet = enrichedArray[0];
 
         return res.status(200).json({
             success: true,
-            data: {
-                ...tweet.toObject(),
-                isLiked,
-                isRetweeted
-            },
+            data: enrichedTweet,
         });
     } catch (error) {
         return res.status(500).json({
@@ -205,8 +268,9 @@ export const getTweetComments = async (req: Request, res: Response) => {
 
 export const createComment = async (req: Request, res: Response) => {
     try {
-        const { id } = req.params;
+        const { id: parentTweetId } = req.params;
         const { content } = req.body;
+        const userId = (req.user as any)._id;
 
         if (!content) {
             return res.status(400).json({
@@ -215,35 +279,78 @@ export const createComment = async (req: Request, res: Response) => {
             });
         }
 
+        console.log(`Creating comment on tweet ${parentTweetId} by user ${userId}`);
+
         const comment = await Tweet.create({
             content,
-            author: req.user._id,
-            parentTweet: id,
+            author: userId,
+            parentTweet: parentTweetId,
         });
 
-        const originalTweet = await Tweet.findByIdAndUpdate(id, { $inc: { repliesCount: 1 } });
+        const originalTweet = await Tweet.findByIdAndUpdate(parentTweetId, { $inc: { repliesCount: 1 } });
 
         // Create comment notification
-        if (originalTweet && originalTweet.author.toString() !== (req.user as any)._id.toString()) {
+        if (originalTweet && originalTweet.author.toString() !== userId.toString()) {
             await Notification.create({
                 recipientId: originalTweet.author,
-                actorId: (req.user as any)._id,
+                actorId: userId,
                 type: NotificationType.COMMENT,
-                postId: id,
+                postId: parentTweetId,
                 commentText: content
             });
         }
 
-        const populatedComment = await comment.populate('author', 'name username image');
+        // Mention detection (@username) in comments
+        const mentions = content.match(/@(\w+)/g);
+        if (mentions) {
+            const usernames = mentions.map((m: string) => m.substring(1));
+            const mentionedUsers = await User.find({ username: { $in: usernames } });
+
+            for (const mentionedUser of mentionedUsers) {
+                if (mentionedUser._id.toString() !== userId.toString()) {
+                    await Notification.create({
+                        recipientId: mentionedUser._id,
+                        actorId: userId,
+                        type: NotificationType.MENTION,
+                        postId: comment._id
+                    });
+                }
+            }
+        }
+
+        // Hashtag detection (#tag) in comments
+        const hashtags = content.match(/#(\w+)/g);
+        if (hashtags) {
+            const tags: string[] = [...new Set(hashtags.map((h: string) => h.substring(1).toLowerCase()) as string[])];
+            const HashtagModel = require('../models/hashtag.model').default;
+            for (const tag of tags) {
+                await HashtagModel.findOneAndUpdate(
+                    { tag },
+                    {
+                        $inc: { count: 1 },
+                        $set: { lastUsed: new Date() }
+                    },
+                    { upsert: true, new: true }
+                );
+            }
+        }
+
+        const populatedComment: any = await comment.populate('author', 'name username image isVerified');
+
+        // Enrich the single comment using the utility
+        const enrichedArray = await enrichTweets([populatedComment], userId.toString());
+        const enrichedComment = enrichedArray[0];
 
         return res.status(201).json({
             success: true,
-            data: populatedComment,
+            data: enrichedComment
         });
     } catch (error) {
+        console.error('Create Comment Error:', error);
         return res.status(500).json({
             success: false,
             message: 'Failed to create comment',
+            error: (error as Error).message
         });
     }
 };
@@ -251,6 +358,12 @@ export const createComment = async (req: Request, res: Response) => {
 export const deleteTweet = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
+        const userId = (req.user as any)?._id?.toString();
+
+        if (!id || id === 'undefined') {
+            return res.status(400).json({ success: false, message: 'Invalid tweet ID' });
+        }
+
         const tweet = await Tweet.findById(id);
 
         if (!tweet) {
@@ -260,7 +373,10 @@ export const deleteTweet = async (req: Request, res: Response) => {
             });
         }
 
-        if (tweet.author.toString() !== req.user._id.toString()) {
+        const authorId = tweet.author.toString();
+
+        if (authorId !== userId) {
+            console.log(`Delete forbidden: Author ${authorId} vs User ${userId}`);
             return res.status(403).json({
                 success: false,
                 message: 'You can only delete your own tweets',
@@ -278,20 +394,22 @@ export const deleteTweet = async (req: Request, res: Response) => {
             message: 'Tweet deleted successfully',
         });
     } catch (error) {
+        console.error('Delete Tweet Error:', error);
         return res.status(500).json({
             success: false,
             message: 'Failed to delete tweet',
+            error: (error as Error).message
         });
     }
 };
 
-import Interaction, { InteractionType } from '../models/interaction.model';
+
 import { Types } from 'mongoose';
 
 export const likeTweet = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        const userId = req.user._id;
+        const userId = (req as any).user._id;
 
         const existingLike = await Interaction.findOne({
             user: userId,
@@ -349,7 +467,7 @@ export const likeTweet = async (req: Request, res: Response) => {
 export const unlikeTweet = async (req: Request, res: Response) => {
     try {
         const { id } = req.params;
-        const userId = req.user._id;
+        const userId = (req as any).user._id;
 
         const result = await Interaction.findOneAndDelete({
             user: userId,
@@ -380,62 +498,46 @@ export const unlikeTweet = async (req: Request, res: Response) => {
 
 export const retweet = async (req: Request, res: Response) => {
     try {
-        const { id } = req.params;
-        const userId = req.user._id;
+        let { id } = req.params;
+        const userId = (req as any).user._id;
 
-        // Check if original tweet exists
-        const originalTweet = await Tweet.findById(id);
-        if (!originalTweet) {
-            return res.status(404).json({
-                success: false,
-                message: 'Tweet not found',
-            });
+        // Resolve canonical tweet (if user clicks repost on a retweet, use the original)
+        let targetTweet = await Tweet.findById(id);
+        if (!targetTweet) {
+            return res.status(404).json({ success: false, message: 'Tweet not found' });
+        }
+        if (targetTweet.retweetOf) {
+            id = targetTweet.retweetOf.toString();
+            targetTweet = await Tweet.findById(id);
+            if (!targetTweet) {
+                return res.status(404).json({ success: false, message: 'Original tweet not found' });
+            }
         }
 
-        const existingRetweet = await Interaction.findOne({
+        const existingInteraction = await Interaction.findOne({
             user: userId,
             tweet: id,
             type: InteractionType.RETWEET,
         });
 
-        if (existingRetweet) {
-            return res.status(400).json({
-                success: false,
-                message: 'You already retweeted this tweet',
-            });
+        // TOGGLE: if interaction exists, undo the retweet
+        if (existingInteraction) {
+            await Interaction.findByIdAndDelete(existingInteraction._id);
+            // Clean up any retweet tweet objects (handle stale ones too)
+            await Tweet.deleteMany({ author: userId, retweetOf: id });
+            await Tweet.findByIdAndUpdate(id, { $inc: { retweetsCount: -1 } });
+            return res.status(200).json({ success: true, message: 'Retweet removed', isRetweeted: false });
         }
 
-        // Create interaction
-        await Interaction.create({
-            user: userId,
-            tweet: id,
-            type: InteractionType.RETWEET,
-        });
-
-        // Create a new tweet as a retweet
-        const newTweet = await Tweet.create({
-            author: userId,
-            retweetOf: id,
-        });
-
+        // Otherwise, create the retweet
+        await Interaction.create({ user: userId, tweet: id, type: InteractionType.RETWEET });
+        const newTweet = await Tweet.create({ author: userId, retweetOf: id });
         await Tweet.findByIdAndUpdate(id, { $inc: { retweetsCount: 1 } });
 
-        // Create repost notification
-        if (originalTweet.author.toString() !== userId.toString()) {
+        if (targetTweet.author.toString() !== userId.toString()) {
             await Notification.findOneAndUpdate(
-                {
-                    recipientId: originalTweet.author,
-                    actorId: userId,
-                    type: NotificationType.REPOST,
-                    postId: id
-                },
-                {
-                    recipientId: originalTweet.author,
-                    actorId: userId,
-                    type: NotificationType.REPOST,
-                    postId: id,
-                    isRead: false
-                },
+                { recipientId: targetTweet.author, actorId: userId, type: NotificationType.REPOST, postId: id },
+                { recipientId: targetTweet.author, actorId: userId, type: NotificationType.REPOST, postId: id, isRead: false },
                 { upsert: true, new: true }
             );
         }
@@ -443,15 +545,61 @@ export const retweet = async (req: Request, res: Response) => {
         const populatedTweet = await newTweet.populate('author', 'name username image');
         await populatedTweet.populate('retweetOf');
 
-        return res.status(201).json({
+        return res.status(201).json({ success: true, message: 'Tweet retweeted', isRetweeted: true, data: populatedTweet });
+    } catch (error) {
+        return res.status(500).json({ success: false, message: 'Failed to retweet' });
+    }
+};
+
+export const unretweet = async (req: Request, res: Response) => {
+    try {
+        let { id } = req.params;
+        const userId = (req as any).user._id;
+
+        const targetTweet = await Tweet.findById(id);
+        if (!targetTweet) {
+            return res.status(404).json({
+                success: false,
+                message: 'Tweet not found',
+            });
+        }
+
+        // Canonical ID resolution
+        const canonicalId = targetTweet.retweetOf ? targetTweet.retweetOf.toString() : id;
+
+        const existingRetweet = await Interaction.findOne({
+            user: userId,
+            tweet: canonicalId,
+            type: InteractionType.RETWEET,
+        });
+
+        if (!existingRetweet) {
+            return res.status(400).json({
+                success: false,
+                message: 'You have not retweeted this tweet',
+            });
+        }
+
+        // Delete interaction from canonical tweet
+        await Interaction.findByIdAndDelete(existingRetweet._id);
+
+        // Delete the retweet tweet object(s) by this user for this canonical tweet
+        await Tweet.deleteMany({
+            author: userId,
+            retweetOf: canonicalId,
+        });
+
+        // Decrement count on canonical tweet
+        await Tweet.findByIdAndUpdate(canonicalId, { $inc: { retweetsCount: -1 } });
+
+        return res.status(200).json({
             success: true,
-            message: 'Tweet retweeted',
-            data: populatedTweet,
+            message: 'Retweet removed',
         });
     } catch (error) {
         return res.status(500).json({
             success: false,
-            message: 'Failed to retweet',
+            message: 'Failed to remove retweet',
         });
     }
 };
@@ -504,10 +652,48 @@ export const getUserLikedTweets = async (req: Request, res: Response) => {
                 populate: { path: 'author', select: 'name username image' }
             });
 
-        const tweets = interactions.map(i => i.tweet);
-        const enrichedTweets = await enrichTweets(tweets, req.user?._id?.toString() || null);
+        const tweets = interactions.map(i => i.tweet).filter(t => t !== null);
+        const enrichedTweets = await enrichTweets(tweets, (req.user as any)?._id?.toString() || null);
         return res.status(200).json({ success: true, data: enrichedTweets });
     } catch (error: any) {
         return res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+export const getUserTweets = async (req: Request, res: Response) => {
+    try {
+        const { username } = req.params;
+        const { filter } = req.query;
+        const user = await User.findOne({ username });
+        if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+
+        let matchQuery: any = { author: user._id };
+
+        // Apply filters (replies/media/posts)
+        if (filter === 'replies') {
+            matchQuery.parentTweet = { $ne: null };
+        } else if (filter === 'media') {
+            matchQuery.media = { $not: { $size: 0 } };
+        } else {
+            // Default 'posts' filter: only show root tweets
+            matchQuery.parentTweet = null;
+        }
+
+        const tweets = await Tweet.find(matchQuery)
+            .sort({ createdAt: -1 })
+            .populate('author', 'name username image isVerified');
+
+        const enrichedTweets = await enrichTweets(tweets, (req.user as any)?._id?.toString() || null);
+
+        return res.status(200).json({
+            success: true,
+            data: enrichedTweets
+        });
+    } catch (error: any) {
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to fetch user tweets',
+            error: error.message
+        });
     }
 };
