@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as userController from '../controllers/user.controller';
 import authMiddleware from '../middlewares/auth.middleware';
+import optionalAuth from '../middlewares/optional-auth.middleware';
 
 const router = Router();
 
@@ -28,15 +29,16 @@ const upload = multer({
 });
 
 // Assuming this route is mounted at /api/users
-router.get('/:username', userController.getUserByUsername);
+router.get('/:username', optionalAuth, userController.getUserByUsername);
 router.put('/profile', authMiddleware, userController.updateProfile);
 router.post('/me/avatar', authMiddleware, upload.single('image'), userController.uploadAvatar);
 router.post('/me/cover', authMiddleware, upload.single('image'), userController.uploadCover);
-import { getUserLikedTweets } from '../controllers/tweet.controller';
+import { getUserLikedTweets, getUserTweets } from '../controllers/tweet.controller';
 
 router.post('/:userId/follow', authMiddleware, userController.toggleFollow);
-router.get('/:username/followers', userController.getFollowers);
-router.get('/:username/following', userController.getFollowing);
-router.get('/:username/likes', getUserLikedTweets);
+router.get('/:username/followers', optionalAuth, userController.getFollowers);
+router.get('/:username/following', optionalAuth, userController.getFollowing);
+router.get('/:username/likes', optionalAuth, getUserLikedTweets);
+router.get('/:username/tweets', optionalAuth, getUserTweets);
 
 export default router;
