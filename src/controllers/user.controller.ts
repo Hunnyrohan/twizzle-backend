@@ -12,7 +12,7 @@ export const toggleFollow = async (req: Request, res: Response, next: NextFuncti
             return errorResponse(res, 'Unauthorized', 401);
         }
 
-        if (followerId === userId) {
+        if (followerId.toString() === userId.toString()) {
             return errorResponse(res, 'Cannot follow yourself', 400);
         }
 
@@ -37,7 +37,7 @@ export const getUserByUsername = async (req: Request, res: Response, next: NextF
     try {
         const username = req.params.username as string;
         // @ts-ignore
-        const currentUserId = (req.user?.id || req.user?._id) as string | undefined;
+        const currentUserId = (req.user?.id || req.user?._id || (req.user as any)?.userId)?.toString();
         const user = await userService.findByUsername(username, currentUserId);
 
         if (!user) {
@@ -64,9 +64,8 @@ export const uploadAvatar = async (req: Request, res: Response, next: NextFuncti
             return errorResponse(res, 'No file uploaded', 400);
         }
 
-        // Generate URL (in production this would be Cloudinary/S3)
-        // For local, we serve from /uploads
-        const imageUrl = `${req.protocol}://${req.get('host')}/uploads/${file.filename}`;
+        // Save relative path: uploads/filename
+        const imageUrl = `uploads/${file.filename}`;
 
         const updatedUser = await userService.updateAvatar(userId, imageUrl);
 
@@ -80,7 +79,7 @@ export const updateProfile = async (req: Request, res: Response, next: NextFunct
     try {
         // @ts-ignore
         const userId = (req.user as any)._id || (req.user as any).id;
-        const { name, bio, location, website } = req.body;
+        const { name, bio, location, website, image, coverImage } = req.body;
 
         if (!userId) {
             return errorResponse(res, 'Unauthorized', 401);
@@ -113,9 +112,8 @@ export const uploadCover = async (req: Request, res: Response, next: NextFunctio
             return errorResponse(res, 'No file uploaded', 400);
         }
 
-        // Generate URL (in production this would be Cloudinary/S3)
-        // For local, we serve from /uploads
-        const imageUrl = `${req.protocol}://${req.get('host')}/uploads/${file.filename}`;
+        // Save relative path: uploads/filename
+        const imageUrl = `uploads/${file.filename}`;
 
         const updatedUser = await userService.updateCoverImage(userId, imageUrl);
 
@@ -128,10 +126,15 @@ export const uploadCover = async (req: Request, res: Response, next: NextFunctio
 export const getFollowers = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const username = req.params.username as string;
+        // @ts-ignore
+        const currentUserId = (req.user?.id || req.user?._id || (req.user as any)?.userId)?.toString();
+
+        console.log(`[UserController] getFollowers for ${username}, currentUserId: ${currentUserId || 'GUEST'}`);
+
         const user = await userService.findByUsername(username);
         if (!user) return errorResponse(res, 'User not found', 404);
 
-        const followers = await userService.getFollowers(user.id as string);
+        const followers = await userService.getFollowers(user.id as string, currentUserId);
         return successResponse(res, followers);
     } catch (error) {
         next(error);
@@ -141,10 +144,15 @@ export const getFollowers = async (req: Request, res: Response, next: NextFuncti
 export const getFollowing = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const username = req.params.username as string;
+        // @ts-ignore
+        const currentUserId = (req.user?.id || req.user?._id || (req.user as any)?.userId)?.toString();
+
+        console.log(`[UserController] getFollowing for ${username}, currentUserId: ${currentUserId || 'GUEST'}`);
+
         const user = await userService.findByUsername(username);
         if (!user) return errorResponse(res, 'User not found', 404);
 
-        const following = await userService.getFollowing(user.id as string);
+        const following = await userService.getFollowing(user.id as string, currentUserId);
         return successResponse(res, following);
     } catch (error) {
         next(error);
