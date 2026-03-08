@@ -1,7 +1,20 @@
 import { Request, Response } from 'express';
 import User from '../models/user.model';
+import Tweet from '../models/tweet.model';
 
 class AdminController {
+  async getStats(_: Request, res: Response) {
+    const usersCount = await User.countDocuments();
+    const tweetsCount = await Tweet.countDocuments();
+    res.json({
+      success: true,
+      data: {
+        usersCount,
+        tweetsCount,
+      }
+    });
+  }
+
   async createUser(req: Request, res: Response) {
     const { name, email, password, role } = req.body;
 
@@ -18,7 +31,7 @@ class AdminController {
 
   async getUsers(_: Request, res: Response) {
     const users = await User.find();
-    res.json({ success: true, data: users });
+    res.json({ success: true, data: { users } });
   }
 
   async getUser(req: Request, res: Response) {
