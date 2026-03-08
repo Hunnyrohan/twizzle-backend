@@ -3,6 +3,9 @@ module.exports = {
     testEnvironment: 'node',
     roots: ['<rootDir>/src'],
     testMatch: ['**/__tests__/**/*.test.ts'],
+    maxWorkers: 1,
+    forceExit: true,
+    testTimeout: 30000,
     collectCoverageFrom: [
         'src/**/*.ts',
         '!src/**/*.d.ts',
