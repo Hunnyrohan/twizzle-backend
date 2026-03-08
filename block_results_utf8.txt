@@ -1,0 +1,152 @@
+﻿
+> twizzle-backend@1.0.0 test
+> jest --verbose --detectOpenHandles src/__tests__/integration/block.test.ts
+
+  console.log
+    Auth Middleware: POST /69a96b289d12530f9fce316c { token: 'Present' }
+
+      at authMiddleware (src/middlewares/auth.middleware.ts:19:13)
+
+  console.log
+    Auth Middleware: Decoded ID: 69a96b289d12530f9fce3169
+
+      at authMiddleware (src/middlewares/auth.middleware.ts:34:13)
+
+  console.log
+    Auth Middleware: GET / { token: 'Present' }
+
+      at authMiddleware (src/middlewares/auth.middleware.ts:19:13)
+
+  console.log
+    Auth Middleware: Decoded ID: 69a96b289d12530f9fce3169
+
+      at authMiddleware (src/middlewares/auth.middleware.ts:34:13)
+
+  console.log
+    Auth Middleware: POST /69a96b289d12530f9fce316c { token: 'Present' }
+
+      at authMiddleware (src/middlewares/auth.middleware.ts:19:13)
+
+  console.log
+    Auth Middleware: Decoded ID: 69a96b289d12530f9fce3169
+
+      at authMiddleware (src/middlewares/auth.middleware.ts:34:13)
+
+  console.log
+    Auth Middleware: GET / { token: 'Present' }
+
+      at authMiddleware (src/middlewares/auth.middleware.ts:19:13)
+
+  console.log
+    Auth Middleware: Decoded ID: 69a96b289d12530f9fce3169
+
+      at authMiddleware (src/middlewares/auth.middleware.ts:34:13)
+
+  console.log
+    Auth Middleware: POST /69a96b289d12530f9fce3179 { token: 'Present' }
+
+      at authMiddleware (src/middlewares/auth.middleware.ts:19:13)
+
+  console.log
+    Auth Middleware: Decoded ID: 69a96b289d12530f9fce3169
+
+      at authMiddleware (src/middlewares/auth.middleware.ts:34:13)
+
+node.exe : FAIL src/__t
+ests__/integration/bloc
+k.test.ts
+At line:1 char:1
++ & "C:\Program 
+Files\nodejs/node.exe" 
+"C:\Program 
+Files\nodejs/node_mo 
+...
++ ~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~
+~~
+    + CategoryInfo     
+         : NotSpecifi  
+  ed: (FAIL src/__te   
+ st...n/block.test.    
+ts:String) [], Rem    
+oteException
+    + FullyQualifiedEr 
+   rorId : NativeComm  
+  andError
+ 
+  Block Integration 
+Tests
+    ΓêÜ should block a 
+user (57 ms)
+    ΓêÜ should show 
+blocked user in blocks 
+list (31 ms)
+    ΓêÜ should unblock 
+a user (40 ms)
+    ΓêÜ should not 
+show unblocked user in 
+blocks list (19 ms)
+    ├ù should return 
+404 for blocking 
+non-existent user (30 
+ms)
+
+  ΓùÅ Block 
+Integration Tests ΓÇ║ 
+should return 404 for 
+blocking non-existent 
+user
+
+    expect(received).to
+Be(expected) // 
+Object.is equality
+
+    Expected: 404
+    Received: 200
+
+    [0m [90m 86 
+|[39m             [33
+m.[39m[36mset[39m([
+32m"Authorization"[39m
+[33m,[39m 
+[32m`Bearer ${token}`
+[39m)[33m;[39m
+     [90m 87 |[39m
+    [31m[1m>[22m[39
+m[90m 88 |[39m       
+  expect(response[33m.
+[39mstatus)[33m.[39m
+toBe([35m404[39m)[33
+m;[39m
+     [90m    |[39m   
+                       
+       
+[31m[1m^[22m[39m
+     [90m 89 |[39m   
+      expect(response[
+33m.[39mbody[33m.[39
+msuccess)[33m.[39mtoB
+e([36mfalse[39m)[33m
+;[39m
+     [90m 90 |[39m   
+  })[33m;[39m
+     [90m 91 |[39m 
+})[33m;[39m[0m
+
+      at 
+Object.<anonymous> (src
+/__tests__/integration/
+block.test.ts:88:33)
+
+Test Suites: 1 failed, 
+1 total
+Tests:       1 failed, 
+4 passed, 5 total
+Snapshots:   0 total
+Time:        3.026 s, 
+estimated 5 s
+Ran all test suites 
+matching src/__tests__/
+integration/block.test.
+ts.
